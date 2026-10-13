@@ -1,0 +1,9 @@
+app:
+  name: AI Interview Coach
+  environment: local
+
+agents:
+  mode: local
+  question_count: 5
+  max_question_count: 10
+  api_key_env: OPENAI_API_KEY
