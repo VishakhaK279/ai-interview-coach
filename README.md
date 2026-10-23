@@ -1,32 +1,93 @@
 # AI Interview Coach
 
-A starter project for practicing interview questions against a job description. The API, three independently replaceable agents, orchestration pipeline, Streamlit demo, and tests have clear boundaries so teammates can work on separate modules.
+AI Interview Coach is a practice application that turns a job description into
+role-focused interview questions, evaluates answers, and provides actionable
+feedback. Candidates can type or speak their answers, review results question by
+question, and download a PDF summary.
 
-## What is included
+This is a coaching tool. Its scores are generated automatically and should not be
+treated as a hiring decision or a definitive measure of a candidate's ability.
 
-- A FastAPI backend with question-generation and answer-evaluation endpoints.
-- Three agents: question generator, answer evaluator, and feedback writer. Groq is enabled by default; deterministic local implementations remain available.
-- Job-description skill extraction, scoring, and feedback formatting helpers.
-- A Streamlit demo with sequential questions, voice transcription, charts, and PDF export.
-- Tests for the agents, pipeline, and utilities.
+## What the application does
 
-The default agents make Groq chat-completion calls. The evaluator intersects recognized skills in the selected question with recognized role skills from the job description and rejects LLM skill classifications outside that intersection. This maintained phrase catalog is not a complete semantic model: if no role skill matches a question, Groq still evaluates whether the answer substantively addresses the question instead of automatically marking it irrelevant. A relevant but incomplete answer receives a score; genuinely off-topic answers remain unscored. The API reports `answer_relevant` separately from recognized-skill coverage. Local mode remains a deterministic keyword-matching baseline and cannot semantically assess questions that have no recognized skill match, so those answers are marked low-confidence and unscored. Feedback receives the original question and answer so its coaching is grounded in the specific response. LangGraph is included for teammates who want to move orchestration into a graph; the starter pipeline currently uses direct Python calls. Teammates can replace an agent's implementation while keeping its input/output contract stable.
+1. Accepts a pasted or uploaded job description.
+2. Extracts recognized role skills and generates interview questions.
+3. Lets the candidate answer each question by text or voice.
+4. Evaluates each answer against its question and relevant role criteria.
+5. Shows feedback, confidence, and evidence coverage in a final summary.
+6. Offers a PDF report containing scores and coaching feedback.
 
-The Data Engineer evaluator uses local RAG: the role rubrics and benchmark Q&A in `data/rubrics/data_engineering/` are chunked and indexed in Chroma, embedded with Ollama, retrieved for Data Engineer job descriptions, and passed to Groq as evaluation context. The full `scoring_guide.md` is retrieved by source so all of its score bands are available to the evaluator. The rubric text is versioned in Git; the generated vector index is local and ignored by Git.
+The Streamlit interface calls a FastAPI backend. In the default `groq` mode,
+Groq's language model generates questions, evaluates answers, and writes feedback.
+Local mode provides a deterministic keyword-matching baseline; it is not a
+semantic substitute for Groq evaluation.
 
-## Evaluation guardrails and audit trail
+## How answer evaluation works
 
-Guardrail behavior is implemented in `app/agents/answer_evaluator.py` (question relevance, style-neutral scoring, and Groq-mode content safety), `app/agents/feedback_writer.py` (evidence-grounded, respectful feedback), `app/pipelines/interview_pipeline.py` (no-score handling), and `app/guardrails.py` (fallback text and audit event format). If evaluation fails or no listed skill is relevant to the question, the API returns a null score and `Answer not scored - irrelevant to the question`. API evaluation responses include a `request_id` (also sent as `X-Request-ID`), `assessed_skills`, and retrieved source references for troubleshooting and integration. The Streamlit candidate view omits request IDs and source file paths.
+The evaluator focuses on whether an answer responds to the specific question and
+what relevant evidence it contains. It is instructed not to reward verbosity or
+penalize concise answers, grammar, accent, or writing style. A short answer can
+score well when it gives a clear, relevant example; a long answer does not earn
+credit merely for being long.
 
-Evaluation audit events are emitted as structured JSON to the application log. The API logs to its console and to `logs/app.log` under the project root. The log file rotates at 5 MB and keeps three backups (`app.log.1`, etc.); `logs/` is excluded from Git. Events include the request ID, timestamp, outcome, score, assessed skills, source paths, and a SHA-256 fingerprint of the job description; raw answers and raw job descriptions are not logged. The SHA-256 fingerprint is a correlation identifier, not anonymization. For deployment, configure a log collector and retention policy appropriate to your privacy requirements.
+When operating in Groq mode, the response includes:
 
-Typed and transcribed voice answers use the same text evaluation endpoint. Groq mode asks the evaluator to block hateful, discriminatory, threatening, or abusive answers without repeating them in feedback. This model-based moderation is a guardrail, not a guarantee. Local mode is only a deterministic development baseline and does **not** provide reliable content-safety moderation; do not expose it as a public evaluation service. Scores are practice feedback, not hiring decisions, and the system is instructed not to judge grammar, accent, writing style, or verbosity.
+- A question-level score from 0 to 100 and written feedback.
+- Skills assessed for that particular question, with matched and missing skills.
+- Evidence levels for assessed skills: `none` (0%), `mention` (30%), `example`
+  (60%), or `detailed` (100%).
+- Confidence (`high`, `medium`, or `low`) and an answer-relevance decision.
 
-When the evaluator marks its confidence as low, the UI displays **“Low confidence — manual review needed.”** Local keyword-matching evaluations are flagged low-confidence because they are a limited baseline, not a semantic assessment. For the dashboard, each assessed skill receives an evidence level per scored answer: no evidence = 0%, mention only = 30%, concrete example = 60%, or detailed explanation with actions/reasoning/outcome = 100%. The per-skill bar is the average evidence weight across scored questions that assessed the skill, including zero-evidence assessments. A one-question skill score is labeled **Low confidence coverage** and shown in a lighter color; two assessments are labeled **Building evidence**, and three or more **Repeated evidence**. Chart coverage is not overall proficiency or a hiring probability. The final summary includes the per-skill evidence bar chart and a strengths-versus-gaps radar chart. The candidate can download a PDF with scores, strengths, improvement areas, and feedback. Raw answer text and voice recordings are not included in the PDF.
+The dashboard's per-skill percentage is the average evidence level across scored
+answers that assessed that skill. It is evidence shown in those answers, not
+overall skill proficiency. When a result has low confidence, the interface asks
+for manual review. Answers deemed irrelevant or blocked by the content-safety
+guardrail are not scored.
+
+## How RAG is used
+
+For Data Engineer/Data Engineering job descriptions, the application retrieves
+relevant passages from the local Data Engineering rubrics and scoring guide. It
+uses Ollama to embed the search query and Chroma to find the most relevant
+passages. The query includes the job description, role skills, interview question,
+and candidate answer. Retrieved passages are provided to the Groq evaluator and
+feedback writer as reference context.
+
+The reference documents are in `data/rubrics/data_engineering/`. Their Markdown
+content is source material; the generated Chroma index is stored locally in
+`.chroma/`. Other roles do not currently use the Data Engineering rubric index.
+RAG adds relevant guidance to the model's context; it does not independently
+verify a candidate's claims.
+
+## Main features
+
+- **Question generation:** creates questions from the supplied job description.
+- **Answer evaluation:** provides a score, skill evidence, and specific feedback.
+- **Sequential interview flow:** supports Previous/Next navigation and a final
+  summary after all questions have been evaluated.
+- **Voice answers:** records audio in the browser, sends it for Groq transcription,
+  and places the transcript in an editable answer field. Audio is not stored or
+  logged by this application.
+- **Skill evidence dashboard:** displays a horizontal per-skill evidence chart,
+  the number of assessed questions, and a plain-language summary of evidence
+  versus areas where answers could use more detail.
+- **Candidate PDF:** exports scores, strengths, improvement areas, and feedback.
+  Raw answers and audio are not included.
+- **Audit logging:** records evaluation metadata with a request ID to the console
+  and `logs/app.log`; candidate answer text and raw job descriptions are not
+  included in those audit events.
+
+## Requirements
+
+- Python 3.10 or newer.
+- A Groq API key for question generation, semantic evaluation, feedback, and
+  transcription.
+- For Data Engineering RAG: Ollama running locally with the configured embedding
+  model, `nomic-embed-text`.
 
 ## Setup
 
-Use Python 3.10 or newer. From this directory:
+Run these commands from the project directory in PowerShell:
 
 ```powershell
 py -m venv .venv
@@ -34,36 +95,45 @@ py -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-If PowerShell blocks activation, use the environment's Python executable directly:
+If virtual-environment activation is unavailable, use the environment's Python
+executable directly:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-## Groq configuration
+## Configure Groq
 
-Create a Groq API key in your Groq account. Copy `.env.example` to `.env` and replace its placeholder with your key. The `.env` file is excluded from Git:
+Copy `.env.example` to `.env` and add your Groq API key:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Alternatively, set `$env:GROQ_API_KEY` in the terminal where you start the API. Environment variables already set in PowerShell take precedence over `.env`. The default model is `openai/gpt-oss-120b`, configured in `config.yaml`; override it with `$env:GROQ_MODEL`. The app loads `.env` at startup and does not write or log the key. Teammates need their own provider key. Never paste keys into source code, `config.yaml`, screenshots, or GitHub. If a key has been shared in chat or committed, revoke it and create a replacement.
+Alternatively, set the key in the terminal where the API is started:
 
-To run without Groq, set `$env:INTERVIEW_AGENT_MODE = "local"` before starting the API. Local mode uses deterministic keyword matching and does not call an LLM.
+```powershell
+$env:GROQ_API_KEY = "your-api-key"
+```
+
+Never commit `.env` or put API keys in `config.yaml`. The default model and
+non-secret application settings are configured in `config.yaml`.
 
 ## Build the Data Engineering RAG index
 
-Install Ollama, then download the configured embedding model and build the local vector index from the Markdown files, including `rubrics.md`, `scoring_guide.md`, and `interview_qna.md`. Sections are chunked at configured character limits (with overlap), embedded in batches, and stored with role/skill/source metadata:
+Install and start Ollama, then download the configured embedding model and build
+the local vector index:
 
 ```powershell
 ollama pull nomic-embed-text
 python -m app.rag.build_index
 ```
 
-Ollama must be running for indexing and for Data Engineer evaluations. Re-run the index command after changing rubric files. Each teammate builds their own `.chroma` index locally; the rubric Markdown files are shared through Git, but the vector database and API keys are not. RAG retrieval currently runs for job descriptions that identify a Data Engineer/Data Engineering role; other roles continue through the LLM without the Data Engineering rubrics.
+Rebuild the index after changing files under
+`data/rubrics/data_engineering/`. Ollama must be available when indexing and when
+evaluating Data Engineering answers with RAG enabled.
 
-## Run the app
+## Run the application
 
 Start the API in one terminal:
 
@@ -71,48 +141,55 @@ Start the API in one terminal:
 python -m uvicorn app.main:app --reload
 ```
 
-Open the API docs at <http://127.0.0.1:8000/docs>.
+Check API health at <http://127.0.0.1:8000/health> or open the interactive API
+documentation at <http://127.0.0.1:8000/docs>.
 
-Start the demo in a second terminal:
+Start the Streamlit interface in another terminal:
 
 ```powershell
 python -m streamlit run ui/streamlit_app.py
 ```
 
-The demo expects the API at `http://127.0.0.1:8000`. To use a different URL, set the `INTERVIEW_API_URL` environment variable before starting Streamlit. After generating questions, the candidate works through them sequentially with Previous/Next controls. Answers and per-question evaluations are kept for the current Streamlit session; the final question offers a summary once every question has been evaluated. When a candidate stops a browser recording, the app automatically sends it to the API for Groq Whisper transcription and places the transcript in the editable answer field. A retry action is available if transcription fails. Audio is sent to Groq and is not stored or logged by this app. Voice transcription is unavailable in local mode.
-The UI allows up to 120 seconds for an API response by default because evaluation calls local embeddings and the LLM. Set `INTERVIEW_API_TIMEOUT_SECONDS` in the UI terminal to change that limit.
-If you did not activate the virtual environment, replace `python` with `.\.venv\Scripts\python.exe` in the commands above.
+By default, the interface connects to `http://127.0.0.1:8000`. Set
+`INTERVIEW_API_URL` in the Streamlit terminal to use a different API address.
+The UI request timeout defaults to 120 seconds and can be changed with
+`INTERVIEW_API_TIMEOUT_SECONDS`.
 
-## API quick reference
+### Local keyword mode
 
-- `GET /health` — check that the API is running.
-- `POST /interview/questions` — JSON body: `{"job_description": "...", "question_count": 5}`.
-- `POST /interview/evaluate` — JSON body: `{"question": "...", "answer": "...", "required_skills": ["Python", "SQL"], "job_description": "..."}`.
-- `POST /interview/transcribe` — raw audio request body (maximum 25 MB), with `Content-Type` set to its audio MIME type and optional `X-Audio-Filename`; available in Groq mode.
+To run the backend without Groq, set this before starting the API:
 
-Question generation extracts recognized skills from the job description (cloud providers are grouped as one alternative skill). Pass those skills and the same job description when evaluating an answer; the UI does this automatically. The evaluation response includes `assessed_skills`, which are the supplied role skills actually relevant to that question; `matched_skills` and `missing_skills` classify only those assessed skills. It also includes `answer_relevant`, the evaluator's judgment about whether the answer substantively addressed the question. A response may be relevant and scored even when no role skill from the maintained catalog maps to that question. In Groq mode, the evaluator can recognize demonstrated evidence rather than requiring the candidate to repeat exact keywords.
-Evaluation responses also include `confidence` (`high`, `medium`, or `low`). Local keyword-matching mode returns `low`; a low value asks for manual review rather than implying a reliable score.
+```powershell
+$env:INTERVIEW_AGENT_MODE = "local"
+python -m uvicorn app.main:app --reload
+```
 
-## Tests
+Local mode uses deterministic keyword matching, has limited relevance assessment,
+and does not provide reliable content-safety moderation. Voice transcription
+requires Groq mode.
+
+## API endpoints
+
+- `GET /health` — reports whether the API is running.
+- `POST /interview/questions` — generates questions from a job description.
+- `POST /interview/evaluate` — evaluates one answer for one question.
+- `POST /interview/transcribe` — transcribes audio in Groq mode; request body is
+  raw audio and is limited to 25 MB.
+
+## Logs and privacy
+
+Evaluation audit records include the request ID, outcome, score, assessed skills,
+retrieved source paths, and a fingerprint of the job description. They do not
+include the raw candidate answer or full job description. The fingerprint is a
+correlation value, not anonymization. Logs are written under `logs/` and rotated
+by the application.
+
+Voice recordings are sent to Groq for transcription and are not stored or logged
+by this application. Review your provider's data handling terms before using
+real candidate information.
+
+## Run tests
 
 ```powershell
 python -m pytest
 ```
-
-## Team ownership and contracts
-
-Suggested independent work areas:
-
-- **Question generation:** `app/agents/question_generator.py`. Keep `generate(job_description, question_count)` returning a list of question strings.
-- **Answer evaluation:** `app/agents/answer_evaluator.py` and `app/utils/scoring.py`. Keep `evaluate(question, answer, required_skills, job_description=None)` returning `EvaluationDetails`.
-- **Feedback:** `app/agents/feedback_writer.py` and `app/utils/formatting.py`. Keep `write(evaluation)` returning a string.
-- **Integration/API:** `app/pipelines/interview_pipeline.py` and `app/main.py`.
-- **Demo UI:** `ui/streamlit_app.py`.
-
-Agree on contract changes with the integration owner before changing schemas. Create a feature branch per task, run `pytest` before opening a pull request, and avoid committing `.env` files or credentials.
-
-## Configuration and screenshots
-
-`config.yaml` contains non-secret defaults for the app and Groq agent settings. Never put API keys in it; credentials are read from environment variables.
-
-There are no demo screenshots yet; add them here when a hosted or local demo is available.
