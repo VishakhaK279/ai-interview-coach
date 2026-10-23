@@ -4,4 +4,6 @@ __pycache__/
 .venv/
 venv/
 .env
+.chroma/
+logs/
 .streamlit/secrets.toml

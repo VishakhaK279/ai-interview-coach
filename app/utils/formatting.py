@@ -9,11 +9,11 @@ def format_feedback(
     """Build concise feedback from skill coverage without claiming LLM analysis."""
     if not matched_skills and not missing_skills:
         return (
-            "No role skills were provided for comparison. Include skills from the "
-            "job description for more targeted feedback."
+            "This question did not map to a recognized role skill. The score "
+            "reflects how well your answer addressed the question."
         )
 
-    parts = [f"Your answer covered {score}% of the listed role skills."]
+    parts = [f"Your answer scored {score}% for this question."]
     if matched_skills:
         parts.append(f"Covered: {', '.join(matched_skills)}.")
     if missing_skills:

@@ -3,7 +3,21 @@ app:
   environment: local
 
 agents:
-  mode: local
+  mode: groq
   question_count: 5
   max_question_count: 10
-  api_key_env: OPENAI_API_KEY
+  api_key_env: GROQ_API_KEY
+  model: openai/gpt-oss-120b
+  api_base_url: https://api.groq.com/openai/v1
+  request_timeout_seconds: 30
+
+rag:
+  enabled: true
+  role: data_engineering
+  collection: data_engineering_rubrics
+  persist_directory: .chroma
+  top_k: 4
+  chunk_size_chars: 1200
+  chunk_overlap_chars: 150
+  ollama_base_url: http://localhost:11434
+  embedding_model: nomic-embed-text
